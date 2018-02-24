@@ -13,15 +13,16 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <time.h>
 #include <sys/sendfile.h>
 
-#define BUFFER_SIZE 128
+#define BUFFER_SIZE 1024
 #define METHOD_BUFFER_SIZE 8
 #define INDEX_HTML_LENGTH 10
 
-#define MAX_ERROR_RESPONSE_LENGTH 512
+#define MAX_ERROR_RESPONSE_LENGTH 256
 
-#define DEFAULT_PORT 8000
+#define DEFAULT_PORT 80
 #define PROC_NUMBER 4
 #define LISTEN_QUEQUE_SIZE 5
 
@@ -38,24 +39,28 @@
 #define ERROR_READ_REQUEST -8
 #define ERROR_PARSE_REQUEST -9
 #define ERROR_INVALID_REQUEST_METHOD -10
+#define ERROR_ESCAPING_ROOT -11
 
-#define ERROR_SEND_MSG -11
+#define ERROR_SEND_MSG -12
 
 #define HTTP_METHOD_GET "GET"
 #define HTTP_METHOD_HEAD "HEAD"
 
 #define HTTP_STATUS_OK 200
 #define HTTP_STATUS_BAD_REQUEST 400
+#define HTTP_STATUS_FORBIDDEN 403
 #define HTTP_STATUS_NOT_FOUND 404
 #define HTTP_STATUS_METHOD_NOT_ALLOWED 405
 #define HTTP_STATUS_INTERNAL_SERVER_ERROR 500
 
 struct response_status {
+    float version;
     unsigned short code;
     char* description;
 };
 
 struct http_request {
+    float version;
     char method[METHOD_BUFFER_SIZE];
     char location[BUFFER_SIZE + INDEX_HTML_LENGTH];    /*room for index.html*/
 };
@@ -128,34 +133,73 @@ int get_sockfd(const int port) {
     return sockfd;
 }
 
+void get_path_without_parameters(char* src, char* dest, int max) {
+    char* ptr = strchr(src, '?');
+    if (ptr) {
+        max = ptr - src;
+    }
+    strncpy(dest, src, max);
+    dest[max] = '\0';
+}
+
+void decode_url(char* src, char* dest, int max) {
+    char *p = src;
+    char code[3] = {0};
+    while (*p != '\0' && --max) {
+        if (*p == '%') {
+            memcpy(code, ++p, 2);
+            *dest++ = (char) strtoul(code, NULL, 16);
+            p += 2;
+        } else {
+            *dest++ = *p++;
+        }
+    }
+    *dest = '\0';
+}
+
 int parse_request(const int fd, struct http_request* request) {
-    char buf[METHOD_BUFFER_SIZE + 1 + BUFFER_SIZE + INDEX_HTML_LENGTH];
-    int length = read(fd, buf, BUFFER_SIZE + INDEX_HTML_LENGTH - 1);
+    char buf[METHOD_BUFFER_SIZE + 1 + BUFFER_SIZE + INDEX_HTML_LENGTH + 10];
+    int length = read(fd, buf, METHOD_BUFFER_SIZE + 1 + BUFFER_SIZE + INDEX_HTML_LENGTH + 9);
 
     if (length < 0) {
         return ERROR_READ_REQUEST;
     }
 
-    char buffer_location[BUFFER_SIZE + INDEX_HTML_LENGTH];
+    char buffer_location[BUFFER_SIZE + INDEX_HTML_LENGTH + 1];
 
     char format[BUFFER_SIZE];
-    sprintf(format, "%%%ds%%%ds", METHOD_BUFFER_SIZE - 1, BUFFER_SIZE - 11);
+    sprintf(format, "%%%ds%%%ds", METHOD_BUFFER_SIZE - 1, BUFFER_SIZE - INDEX_HTML_LENGTH - 1);
 
     if (sscanf(buf, format, request->method, buffer_location) < 2) {
         return ERROR_PARSE_REQUEST;
+    } else if (strcmp(request->method, HTTP_METHOD_GET) != 0
+               && strcmp(request->method, HTTP_METHOD_HEAD) != 0) {
+        return ERROR_INVALID_REQUEST_METHOD;
+    } else if (strstr(buf, "HTTP/1.1") != NULL) {
+        request->version = 1.1;
+    } else if (strstr(buf, "HTTP/1.0") != NULL) {
+        request->version = 1.0;
     } else {
-        if (strcmp(request->method, HTTP_METHOD_GET) != 0
-                && strcmp(request->method, HTTP_METHOD_HEAD) != 0) {
-            return ERROR_INVALID_REQUEST_METHOD;
-        }
+        return ERROR_PARSE_REQUEST;
     }
 
-    int location_length = strlen(buffer_location);
-    if (buffer_location[location_length - 1] == '/') {
-        sprintf(buffer_location + location_length, "index.html");
+    if (strstr(buffer_location, "/..")) {
+        return ERROR_ESCAPING_ROOT;
     }
 
-    sprintf(request->location, "%s", buffer_location + 1);
+    char raw_buffer_location[BUFFER_SIZE + INDEX_HTML_LENGTH + 1];
+    get_path_without_parameters(buffer_location, raw_buffer_location, strlen(buffer_location));
+
+    char decoded_buffer_location[BUFFER_SIZE + INDEX_HTML_LENGTH];
+    decode_url(raw_buffer_location, decoded_buffer_location, BUFFER_SIZE + INDEX_HTML_LENGTH);
+
+    int location_length = strlen(decoded_buffer_location);
+
+    if (decoded_buffer_location[location_length - 1] == '/') {
+        sprintf(decoded_buffer_location + location_length, "index.html");
+    }
+
+    sprintf(request->location, "%s", decoded_buffer_location + 1);
 
     return 0;
 }
@@ -194,24 +238,36 @@ ssize_t reliable_sendfile(const int fd, const int rqfd, size_t size) {
     return offset;
 }
 
+void form_basic_responce(char* content, const struct response_status* status) {
 
-void send_error(const int fd, const struct response_status* status, const char* msg) {
-    char raw_responce[MAX_ERROR_RESPONSE_LENGTH];
-    sprintf(raw_responce, "HTTP/1.1 %d %s\r\n", status->code, status->description);
-    sprintf(raw_responce + strlen(raw_responce), "Content-length: %lu\r\n\r\n", strlen(msg));
-    sprintf(raw_responce + strlen(raw_responce), "%s", msg);
-    reliable_write(fd, raw_responce, strlen(raw_responce));
+    sprintf(content, "HTTP/%1.1f %u %s\r\n", status->version, status->code, status->description);
+    sprintf(content + strlen(content), "Server: mikegus c server v1.0\r\n");
+
+    char buf[BUFFER_SIZE];
+    time_t now = time(NULL);
+    struct tm tm = *gmtime(&now);
+    strftime(buf, sizeof(buf), "%a, %d, %b, %Y %H:%M:%S %Z", &tm);
+
+    sprintf(content + strlen(content), "Date: %s\r\n", buf);
+    sprintf(content + strlen(content), "Connection: keep-alive\r\n");
+}
+
+
+void send_error(const int fd, const struct response_status* status) {
+    char content[MAX_ERROR_RESPONSE_LENGTH];
+    form_basic_responce(content, status);
+    reliable_write(fd, content, strlen(content));
 }
 
 void send_static(const int fd, const int rqfd, const char* path,
                  const struct response_status* status, const size_t file_size,
                  const unsigned short headers_only) {
     char* content = (char*) calloc(file_size + BUFFER_SIZE, sizeof(char));
-    sprintf(content, "HTTP/1.1 %u %s\r\nAccept-Ranges: bytes\r\n", status->code, status->description);
-    sprintf(content + strlen(content), "Cache-control: no-cache\r\n");
-    sprintf(content + strlen(content), "Content-length: %lu\r\n", file_size);
+    form_basic_responce(content, status);
+
+    sprintf(content + strlen(content), "Content-Length: %lu\r\n", file_size);
     const char* mime_type = get_mime_type(path);
-    sprintf(content + strlen(content), "Content-type: %s\r\n\r\n", mime_type);
+    sprintf(content + strlen(content), "Content-Type: %s\r\n\r\n", mime_type);
 
     reliable_write(fd, content, strlen(content));
 
@@ -219,6 +275,7 @@ void send_static(const int fd, const int rqfd, const char* path,
         reliable_sendfile(fd, rqfd, file_size);
     }
 
+    free(content);
 }
 
 void process_request(const int fd) {
@@ -227,6 +284,8 @@ void process_request(const int fd) {
     struct response_status response;
 
     int parse_status = parse_request(fd, &request);
+
+    response.version = request.version;
 
     switch (parse_status) {
     case 0:
@@ -240,6 +299,11 @@ void process_request(const int fd) {
     case ERROR_PARSE_REQUEST:
         response.code = HTTP_STATUS_BAD_REQUEST;
         response.description = "Bad request";
+        break;
+    case ERROR_ESCAPING_ROOT:
+        response.code = HTTP_STATUS_BAD_REQUEST;
+        response.description = "Bad request";
+        break;
     default:
         response.code = HTTP_STATUS_INTERNAL_SERVER_ERROR;
         response.description = "Internal server error";
@@ -250,8 +314,14 @@ void process_request(const int fd) {
 
     int rqfd = open(request.location, O_RDONLY, 0);
     if (rqfd < 0) {
-        response.code = HTTP_STATUS_NOT_FOUND;
-        response.description = "Not found";
+        if (strstr(request.location, "index.html")) {
+            response.code = HTTP_STATUS_FORBIDDEN;
+            response.description = "Forbidden";
+        } else {
+            response.code = HTTP_STATUS_NOT_FOUND;
+            response.description = "Not found";
+        }
+
     }
 
     fstat(rqfd, &filestat);
@@ -267,22 +337,7 @@ void process_request(const int fd) {
         }
         send_static(fd, rqfd, request.location, &response, filestat.st_size, headers_only);
     } else {
-        char* error_msg;
-        switch (response.code) {
-        case HTTP_STATUS_BAD_REQUEST:
-            error_msg = "Bad request";
-            break;
-        case HTTP_STATUS_METHOD_NOT_ALLOWED:
-            error_msg = "Unsupported method";
-            break;
-        case HTTP_STATUS_NOT_FOUND:
-            error_msg = "File not found";
-            break;
-        default:
-            error_msg = "Unknown error";
-            break;
-        }
-        send_error(fd, &response, error_msg);
+        send_error(fd, &response);
     }
     close(rqfd);
 }
@@ -330,7 +385,6 @@ int main(int argc, char* argv[]) {
                 close(acceptfd);
             }
         } else if (pid > 0) {
-//            printf("Succesfully forked. Child pid is %d\n", pid);
         } else {
             perror("Can't fork");
             return ERROR_FORK;
