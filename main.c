@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <sys/sendfile.h>
 
 #define BUFFER_SIZE 128
 #define METHOD_BUFFER_SIZE 8
@@ -59,6 +60,38 @@ struct http_request {
     char location[BUFFER_SIZE + INDEX_HTML_LENGTH];    /*room for index.html*/
 };
 
+struct mime_map {
+    const char* extention;
+    const char* mime_type;
+};
+
+struct mime_map mime_types[] = {
+    {".css", "text/css"},
+    {".gif", "image/gif"},
+    {".html", "text/html"},
+    {".js", "application/javascript"},
+    {".jpg", "image/jpeg"},
+    {".jpeg", "image/jpeg"},
+    {".png", "image/png"},
+    {".swf", "application/x-shockwave-flash"},
+    {NULL, NULL}
+};
+
+const char* default_mime_type = "text/html";
+
+const char* get_mime_type(const char* path) {
+    char* dot = strrchr(path, '.');
+    if (dot) {
+        struct mime_map* map = mime_types;
+        while (map->extention != NULL) {
+            if (strcmp(map->extention, dot) == 0) {
+                return map->mime_type;
+            }
+            map++;
+        }
+    }
+    return default_mime_type;
+}
 
 int get_sockfd(const int port) {
 
@@ -150,6 +183,17 @@ ssize_t reliable_write(const int fd, const char* msg, size_t size) {
     return size;
 }
 
+ssize_t reliable_sendfile(const int fd, const int rqfd, size_t size) {
+    off_t offset = 0;
+    while ((unsigned) offset < size) {
+        if (sendfile(fd, rqfd, &offset, size) <= 0) {
+            break;
+        }
+    }
+
+    return offset;
+}
+
 
 void send_error(const int fd, const struct response_status* status, const char* msg) {
     char raw_responce[MAX_ERROR_RESPONSE_LENGTH];
@@ -159,13 +203,26 @@ void send_error(const int fd, const struct response_status* status, const char* 
     reliable_write(fd, raw_responce, strlen(raw_responce));
 }
 
-void send_static(const int fd, const int rqfd, size_t file_size) {
-    return;
+void send_static(const int fd, const int rqfd, const char* path,
+                 const struct response_status* status, const size_t file_size,
+                 const unsigned short headers_only) {
+    char* content = (char*) calloc(file_size + BUFFER_SIZE, sizeof(char));
+    sprintf(content, "HTTP/1.1 %u %s\r\nAccept-Ranges: bytes\r\n", status->code, status->description);
+    sprintf(content + strlen(content), "Cache-control: no-cache\r\n");
+    sprintf(content + strlen(content), "Content-length: %lu\r\n", file_size);
+    const char* mime_type = get_mime_type(path);
+    sprintf(content + strlen(content), "Content-type: %s\r\n\r\n", mime_type);
+
+    reliable_write(fd, content, strlen(content));
+
+    if (!headers_only) {
+        reliable_sendfile(fd, rqfd, file_size);
+    }
+
 }
 
 void process_request(const int fd) {
-    printf("Process %d accepted request for fd %d\n", getpid(), fd);
-
+//    printf("Process %d accepted request for fd %d\n", getpid(), fd);
     struct http_request request;
     struct response_status response;
 
@@ -204,7 +261,11 @@ void process_request(const int fd) {
     }
 
     if (response.code == HTTP_STATUS_OK) {
-        send_static(fd, rqfd, filestat.st_size);
+        unsigned short headers_only = 0;
+        if (strcmp(request.method, HTTP_METHOD_HEAD) == 0) {
+            headers_only = 1;
+        }
+        send_static(fd, rqfd, request.location, &response, filestat.st_size, headers_only);
     } else {
         char* error_msg;
         switch (response.code) {
@@ -223,6 +284,7 @@ void process_request(const int fd) {
         }
         send_error(fd, &response, error_msg);
     }
+    close(rqfd);
 }
 
 
@@ -248,7 +310,7 @@ int main(int argc, char* argv[]) {
     int sockfd = get_sockfd(port);
 
     if (sockfd > 0) {
-        printf("Sockets listening to port %d, sockfd is %d.\n", port, sockfd);
+        printf("Server is listening to port %d.\n", port);
     } else {
         perror("Error with socket setup");
         return sockfd;
@@ -268,7 +330,7 @@ int main(int argc, char* argv[]) {
                 close(acceptfd);
             }
         } else if (pid > 0) {
-            printf("Succesfully forked. Child pid is %d\n", pid);
+//            printf("Succesfully forked. Child pid is %d\n", pid);
         } else {
             perror("Can't fork");
             return ERROR_FORK;
