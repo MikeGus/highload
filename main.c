@@ -10,15 +10,19 @@
 #include <string.h>
 #include <arpa/inet.h>
 #include <signal.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <errno.h>
 
-
-#define LISTEN_QUEQUE_SIZE 5
 #define BUFFER_SIZE 128
 #define METHOD_BUFFER_SIZE 8
 #define INDEX_HTML_LENGTH 10
 
+#define MAX_ERROR_RESPONSE_LENGTH 512
+
 #define DEFAULT_PORT 8000
 #define PROC_NUMBER 8
+#define LISTEN_QUEQUE_SIZE 5
 
 #define ERROR_INVALID_DIRECTORY_ARGUMENT -1
 
@@ -34,27 +38,25 @@
 #define ERROR_PARSE_REQUEST -9
 #define ERROR_INVALID_REQUEST_METHOD -10
 
+#define ERROR_SEND_MSG -11
+
 #define HTTP_METHOD_GET "GET"
 #define HTTP_METHOD_HEAD "HEAD"
 
-struct responce_status {
-    const unsigned short code;
-    const char* description;
-};
+#define HTTP_STATUS_OK 200
+#define HTTP_STATUS_BAD_REQUEST 400
+#define HTTP_STATUS_NOT_FOUND 404
+#define HTTP_STATUS_METHOD_NOT_ALLOWED 405
+#define HTTP_STATUS_INTERNAL_SERVER_ERROR 500
 
-struct responce_status statuses[] = {
-    {200, "OK"},
-    {404, "NOT FOUND"},
-    {405, "METHOD NOT ALLOWED"}
+struct response_status {
+    unsigned short code;
+    char* description;
 };
 
 struct http_request {
     char method[METHOD_BUFFER_SIZE];
     char location[BUFFER_SIZE + INDEX_HTML_LENGTH];    /*room for index.html*/
-};
-
-struct http_responce {
-    unsigned status;
 };
 
 
@@ -125,16 +127,81 @@ int parse_request(const int fd, struct http_request* request) {
     return 0;
 }
 
-void process_request(const int fd, struct sockaddr_in* clientaddr) {
-    printf("Process %d accepted request for fd %d\n", getpid(), fd);
-    struct http_request request;
 
-    int parse_status = parse_request(fd, &request);
-    if (parse_status != 0) {
-        printf("Request parsing failed. Error code: %d\n", parse_status);
+ssize_t reliable_write(const int fd, const char* msg, size_t size) {
+    size_t left = size;
+    ssize_t written = 0;
+
+    char* msgptr = (char*) msg;
+
+    while (left > 0) {
+        written = write(fd, msgptr, left);
+        if (written <= 0) {
+            if (errno == EINTR) {
+                written = 0;
+            } else {
+                return ERROR_SEND_MSG;
+            }
+        }
+        left -= written;
+        msgptr += written;
     }
 
+    return size;
+}
+
+
+void send_error(const int fd, const struct response_status* status, const char* msg) {
+    char raw_responce[MAX_ERROR_RESPONSE_LENGTH];
+    sprintf(raw_responce, "HTTP/1.1 %d %s\r\n", status->code, status->description);
+    sprintf(raw_responce + strlen(raw_responce), "Content-length: %lu\r\n\r\n", strlen(msg));
+    sprintf(raw_responce + strlen(raw_responce), "%s", msg);
+    reliable_write(fd, raw_responce, strlen(raw_responce));
+}
+
+
+
+void process_request(const int fd) {
+    printf("Process %d accepted request for fd %d\n", getpid(), fd);
+
+    struct http_request request;
+    struct response_status response;
+
+    int parse_status = parse_request(fd, &request);
+
+    switch (parse_status) {
+    case 0:
+        response.code = HTTP_STATUS_OK;
+        response.description = "Ok";
+        break;
+    case ERROR_INVALID_REQUEST_METHOD:
+        response.code = HTTP_STATUS_METHOD_NOT_ALLOWED;
+        response.description = "Method not allowed";
+        break;
+    case ERROR_PARSE_REQUEST:
+        response.code = HTTP_STATUS_BAD_REQUEST;
+        response.description = "Bad request";
+    default:
+        response.code = HTTP_STATUS_INTERNAL_SERVER_ERROR;
+        response.description = "Internal server error";
+        break;
+    }
+
+    struct stat filestat;
+
+    int rqfd = open(request.location, O_RDONLY, 0);
+    if (rqfd < 0) {
+        response.code = HTTP_STATUS_NOT_FOUND;
+        response.description = "Not found";
+        const char* msg = "File not found";
+        send_error(fd, &response, msg);
+    }
+
+
+
+
     printf("Method: %s\n\rLocation: %s\n\r", request.method, request.location);
+
 }
 
 
@@ -176,7 +243,7 @@ int main(int argc, char* argv[]) {
         if (pid == 0) {
             while (1) {
                 int acceptfd = accept(sockfd, (struct sockaddr*) &clientaddr, &clientaddr_length);
-                process_request(acceptfd, &clientaddr);
+                process_request(acceptfd);
                 close(acceptfd);
             }
         } else if (pid > 0) {
@@ -189,7 +256,7 @@ int main(int argc, char* argv[]) {
 
     while (1) {
         int acceptfd = accept(sockfd, (struct sockaddr*) &clientaddr, &clientaddr_length);
-        process_request(acceptfd, &clientaddr);
+        process_request(acceptfd);
         close(acceptfd);
     }
 
