@@ -159,7 +159,9 @@ void send_error(const int fd, const struct response_status* status, const char* 
     reliable_write(fd, raw_responce, strlen(raw_responce));
 }
 
-
+void send_static(const int fd, const int rqfd, size_t file_size) {
+    return;
+}
 
 void process_request(const int fd) {
     printf("Process %d accepted request for fd %d\n", getpid(), fd);
@@ -193,15 +195,34 @@ void process_request(const int fd) {
     if (rqfd < 0) {
         response.code = HTTP_STATUS_NOT_FOUND;
         response.description = "Not found";
-        const char* msg = "File not found";
-        send_error(fd, &response, msg);
     }
 
+    fstat(rqfd, &filestat);
+    if (response.code == HTTP_STATUS_OK && !S_ISREG(filestat.st_mode)) {
+        response.code = HTTP_STATUS_INTERNAL_SERVER_ERROR;
+        response.description = "Internal server error";
+    }
 
-
-
-    printf("Method: %s\n\rLocation: %s\n\r", request.method, request.location);
-
+    if (response.code == HTTP_STATUS_OK) {
+        send_static(fd, rqfd, filestat.st_size);
+    } else {
+        char* error_msg;
+        switch (response.code) {
+        case HTTP_STATUS_BAD_REQUEST:
+            error_msg = "Bad request";
+            break;
+        case HTTP_STATUS_METHOD_NOT_ALLOWED:
+            error_msg = "Unsupported method";
+            break;
+        case HTTP_STATUS_NOT_FOUND:
+            error_msg = "File not found";
+            break;
+        default:
+            error_msg = "Unknown error";
+            break;
+        }
+        send_error(fd, &response, error_msg);
+    }
 }
 
 
