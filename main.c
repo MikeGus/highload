@@ -54,13 +54,11 @@
 #define HTTP_STATUS_INTERNAL_SERVER_ERROR 500
 
 struct response_status {
-    float version;
     unsigned short code;
     char* description;
 };
 
 struct http_request {
-    float version;
     char method[METHOD_BUFFER_SIZE];
     char location[BUFFER_SIZE + INDEX_HTML_LENGTH];    /*room for index.html*/
 };
@@ -175,12 +173,6 @@ int parse_request(const int fd, struct http_request* request) {
     } else if (strcmp(request->method, HTTP_METHOD_GET) != 0
                && strcmp(request->method, HTTP_METHOD_HEAD) != 0) {
         return ERROR_INVALID_REQUEST_METHOD;
-    } else if (strstr(buf, "HTTP/1.1") != NULL) {
-        request->version = 1.1;
-    } else if (strstr(buf, "HTTP/1.0") != NULL) {
-        request->version = 1.0;
-    } else {
-        return ERROR_PARSE_REQUEST;
     }
 
     if (strstr(buffer_location, "/..")) {
@@ -240,7 +232,7 @@ ssize_t reliable_sendfile(const int fd, const int rqfd, size_t size) {
 
 void form_basic_responce(char* content, const struct response_status* status) {
 
-    sprintf(content, "HTTP/%1.1f %u %s\r\n", status->version, status->code, status->description);
+    sprintf(content, "HTTP/1.1 %u %s\r\n", status->code, status->description);
     sprintf(content + strlen(content), "Server: mikegus c server v1.0\r\n");
 
     char buf[BUFFER_SIZE];
@@ -279,13 +271,10 @@ void send_static(const int fd, const int rqfd, const char* path,
 }
 
 void process_request(const int fd) {
-//    printf("Process %d accepted request for fd %d\n", getpid(), fd);
     struct http_request request;
     struct response_status response;
 
     int parse_status = parse_request(fd, &request);
-
-    response.version = request.version;
 
     switch (parse_status) {
     case 0:
@@ -376,7 +365,7 @@ int main(int argc, char* argv[]) {
     struct sockaddr_in clientaddr;
     socklen_t clientaddr_length = sizeof(clientaddr);
 
-    for (unsigned i = 0; i < PROC_NUMBER; ++i) {
+    for (unsigned i = 1; i < PROC_NUMBER; ++i) {
         int pid = fork();
         if (pid == 0) {
             while (1) {
@@ -384,8 +373,7 @@ int main(int argc, char* argv[]) {
                 process_request(acceptfd);
                 close(acceptfd);
             }
-        } else if (pid > 0) {
-        } else {
+        } else if (pid < 0) {
             perror("Can't fork");
             return ERROR_FORK;
         }
