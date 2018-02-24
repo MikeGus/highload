@@ -13,7 +13,10 @@
 
 
 #define LISTEN_QUEQUE_SIZE 5
-#define BUFFER_SIZE 256
+#define BUFFER_SIZE 128
+#define METHOD_BUFFER_SIZE 8
+#define INDEX_HTML_LENGTH 10
+
 #define DEFAULT_PORT 8000
 #define PROC_NUMBER 8
 
@@ -26,6 +29,34 @@
 #define ERROR_SOCKET_LISTEN -6
 
 #define ERROR_FORK -7
+
+#define ERROR_READ_REQUEST -8
+#define ERROR_PARSE_REQUEST -9
+#define ERROR_INVALID_REQUEST_METHOD -10
+
+#define HTTP_METHOD_GET "GET"
+#define HTTP_METHOD_HEAD "HEAD"
+
+struct responce_status {
+    const unsigned short code;
+    const char* description;
+};
+
+struct responce_status statuses[] = {
+    {200, "OK"},
+    {404, "NOT FOUND"},
+    {405, "METHOD NOT ALLOWED"}
+};
+
+struct http_request {
+    char method[METHOD_BUFFER_SIZE];
+    char location[BUFFER_SIZE + INDEX_HTML_LENGTH];    /*room for index.html*/
+};
+
+struct http_responce {
+    unsigned status;
+};
+
 
 int get_sockfd(const int port) {
 
@@ -62,8 +93,48 @@ int get_sockfd(const int port) {
     return sockfd;
 }
 
+int parse_request(const int fd, struct http_request* request) {
+    char buf[METHOD_BUFFER_SIZE + 1 + BUFFER_SIZE + INDEX_HTML_LENGTH];
+    int length = read(fd, buf, BUFFER_SIZE + INDEX_HTML_LENGTH - 1);
+
+    if (length < 0) {
+        return ERROR_READ_REQUEST;
+    }
+
+    char buffer_location[BUFFER_SIZE + INDEX_HTML_LENGTH];
+
+    char format[BUFFER_SIZE];
+    sprintf(format, "%%%ds%%%ds", METHOD_BUFFER_SIZE - 1, BUFFER_SIZE - 11);
+
+    if (sscanf(buf, format, request->method, buffer_location) < 2) {
+        return ERROR_PARSE_REQUEST;
+    } else {
+        if (strcmp(request->method, HTTP_METHOD_GET) != 0
+                && strcmp(request->method, HTTP_METHOD_HEAD) != 0) {
+            return ERROR_INVALID_REQUEST_METHOD;
+        }
+    }
+
+    int location_length = strlen(buffer_location);
+    if (buffer_location[location_length - 1] == '/') {
+        sprintf(buffer_location + location_length, "index.html");
+    }
+
+    sprintf(request->location, "%s", buffer_location + 1);
+
+    return 0;
+}
+
 void process_request(const int fd, struct sockaddr_in* clientaddr) {
-    return;
+    printf("Process %d accepted request for fd %d\n", getpid(), fd);
+    struct http_request request;
+
+    int parse_status = parse_request(fd, &request);
+    if (parse_status != 0) {
+        printf("Request parsing failed. Error code: %d\n", parse_status);
+    }
+
+    printf("Method: %s\n\rLocation: %s\n\r", request.method, request.location);
 }
 
 
