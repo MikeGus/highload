@@ -18,3 +18,6 @@ HEADERS += \
     autowrite.h \
     autosendfile.h \
     mysocket.h
+
+DISTFILES += \
+    Dockerfile
