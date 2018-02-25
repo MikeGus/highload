@@ -1,0 +1,7 @@
+#ifndef HTTP_METHODS_H
+#define HTTP_METHODS_H
+
+#define HTTP_METHOD_GET "GET"
+#define HTTP_METHOD_HEAD "HEAD"
+
+#endif // HTTP_METHODS_H

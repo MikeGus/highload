@@ -1,0 +1,14 @@
+#ifndef MYSOCKET_H
+#define MYSOCKET_H
+
+#define LISTEN_QUEQUE_SIZE 20
+
+#define ERROR_SOCKET_CREATION -2
+#define ERROR_SOCKET_SET_REUSEADD_OPTION -3
+#define ERROR_SOCKET_TCP_CORK -4
+#define ERROR_SOCKET_BINDING -5
+#define ERROR_SOCKET_LISTEN -6
+
+int get_sockfd(const int port);
+
+#endif // MYSOCKET_H
