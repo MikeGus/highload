@@ -6,8 +6,6 @@ ENV WORK /mikegus
 
 WORKDIR $WORK/
 
-ADD . .
-
 RUN cc -o highload *.c
 
 EXPOSE 80

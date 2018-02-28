@@ -17,16 +17,15 @@
 #include "autowrite.h"
 #include "autosendfile.h"
 #include "mysocket.h"
+#include "parse_config.h"
 
 #define MAX_ERROR_RESPONSE_LENGTH 256
 
 #define DEFAULT_PORT 80
-#define PROC_NUMBER 4
+#define DEFAULT_CPU_NUMBER 4
+#define DEFAULT_PATH "/var/www/html"
 
-#define ERROR_INVALID_DIRECTORY_ARGUMENT -1
-
-#define ERROR_FORK -7
-
+#define ERROR_FORK -1
 
 void form_basic_responce(char* content, const struct response_status* status) {
 
@@ -130,29 +129,30 @@ void process_request(const int fd) {
 }
 
 
-int main(int argc, char* argv[]) {
+int main(void) {
 
-    int port = DEFAULT_PORT;
+    struct configf config;
+    config.port = DEFAULT_PORT;
+    config.cpu = DEFAULT_CPU_NUMBER;
 
-    if (argc > 1) {
-        char* port_argument = argv[1];
-        if (isdigit(*port_argument)) {
-            port = atoi(port_argument);
-        }
+    if (sprintf(config.path, "%s", DEFAULT_PATH) < 0) {
+        perror("Sprintf error");
+        return ERROR_SPRINTF;
     }
 
-    if (argc > 2) {
-        char* work_dir_argument = argv[2];
-        if (chdir(work_dir_argument) != 0) {
-            fprintf(stderr, "Can't work with provided directory: %s\n", work_dir_argument);
-            return ERROR_INVALID_DIRECTORY_ARGUMENT;
-        }
+    int error = parse_config(&config);
+    if (error != 0) {
+        fprintf(stderr, "Can't parse %s\n", PATH);
+        return error;
     }
 
-    int sockfd = get_sockfd(port);
+//    printf("Port: %d\nCPU: %d\nPath: %s\n",
+//           config.port, config.cpu, config.path);
 
+    int sockfd = get_sockfd(config.port);
     if (sockfd > 0) {
-        printf("Server is listening to port %d.\n", port);
+        printf("Server is listening to port %d.\nStatic files root: %s\n",
+               config.port, config.path);
     } else {
         perror("Error with socket setup");
         return sockfd;
@@ -163,7 +163,7 @@ int main(int argc, char* argv[]) {
     struct sockaddr_in clientaddr;
     socklen_t clientaddr_length = sizeof(clientaddr);
 
-    for (unsigned i = 1; i < PROC_NUMBER; ++i) {
+    for (unsigned i = 1; i < config.cpu; ++i) {
         int pid = fork();
         if (pid == 0) {
             while (1) {

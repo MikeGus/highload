@@ -8,7 +8,8 @@ SOURCES += main.c \
     http_request_parser.c \
     autowrite.c \
     autosendfile.c \
-    mysocket.c
+    mysocket.c \
+    parse_config.c
 
 HEADERS += \
     mime_types.h \
@@ -17,7 +18,8 @@ HEADERS += \
     http_statuses.h \
     autowrite.h \
     autosendfile.h \
-    mysocket.h
+    mysocket.h \
+    parse_config.h
 
 DISTFILES += \
     Dockerfile
