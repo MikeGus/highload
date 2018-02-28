@@ -152,9 +152,6 @@ int main(void) {
         return ERROR_CWD;
     }
 
-//    printf("Port: %d\nCPU: %d\nPath: %s\n",
-//           config.port, config.cpu, config.path);
-
     int sockfd = get_sockfd(config.port);
     if (sockfd > 0) {
         printf("Server is listening to port %d.\nStatic files root: %s\n",

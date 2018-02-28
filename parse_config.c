@@ -48,11 +48,5 @@ int parse_config(struct configf* configf) {
         }
     }
 
-    int length = strlen(configf->path);
-    if (configf->path[length - 1] != '/') {
-        configf->path[length] = '/';
-        configf->path[length + 1] = '\0';
-    }
-
     return 0;
 }
