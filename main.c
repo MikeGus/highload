@@ -26,6 +26,7 @@
 #define DEFAULT_PATH "/var/www/html"
 
 #define ERROR_FORK -1
+#define ERROR_CWD -2
 
 void form_basic_responce(char* content, const struct response_status* status) {
 
@@ -144,6 +145,11 @@ int main(void) {
     if (error != 0) {
         fprintf(stderr, "Can't parse %s\n", PATH);
         return error;
+    }
+
+    if (chdir(config.path) != 0) {
+        perror("Can't change cwd");
+        return ERROR_CWD;
     }
 
 //    printf("Port: %d\nCPU: %d\nPath: %s\n",
