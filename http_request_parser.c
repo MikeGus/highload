@@ -6,6 +6,8 @@
 #include <unistd.h>
 #include <stdlib.h>
 
+#define PARSE_LENGTH METHOD_BUFFER_SIZE + 1 + BUFFER_SIZE + INDEX_HTML_LENGTH + 10
+
 void get_path_without_parameters(char* src, char* dest, int max) {
     char* ptr = strchr(src, '?');
     if (ptr) {
@@ -31,8 +33,9 @@ void decode_url(char* src, char* dest, int max) {
 }
 
 int parse_request(const int fd, struct http_request* request) {
-    char buf[METHOD_BUFFER_SIZE + 1 + BUFFER_SIZE + INDEX_HTML_LENGTH + 10];
-    int length = read(fd, buf, METHOD_BUFFER_SIZE + 1 + BUFFER_SIZE + INDEX_HTML_LENGTH + 9);
+    char buf[PARSE_LENGTH];
+
+    int length = read(fd, buf, PARSE_LENGTH);
 
     if (length < 0) {
         return ERROR_READ_REQUEST;
