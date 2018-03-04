@@ -36,7 +36,6 @@ int parse_request(const int fd, struct http_request* request) {
     char buf[PARSE_LENGTH];
 
     int length = read(fd, buf, PARSE_LENGTH);
-
     if (length < 0) {
         return ERROR_READ_REQUEST;
     }

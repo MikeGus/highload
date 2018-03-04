@@ -28,8 +28,6 @@
 #define ERROR_FORK -1
 #define ERROR_CWD -2
 
-static int count = 0;
-
 void form_basic_responce(char* content, const struct response_status* status) {
 
     sprintf(content, "HTTP/1.1 %u %s\r\n", status->code, status->description);
@@ -55,7 +53,6 @@ void send_static(const int fd, const int rqfd, const char* path,
                  const struct response_status* status, const size_t file_size,
                  const unsigned short headers_only) {
 
-//    printf("%d: Request #%d sending\n", getpid(), count);
     char* content = (char*) calloc(file_size + BUFFER_SIZE, sizeof(char));
     form_basic_responce(content, status);
 
@@ -70,8 +67,6 @@ void send_static(const int fd, const int rqfd, const char* path,
     }
 
     free(content);
-
-//    printf("%d: Request #%d sent\n", getpid(), count);
 }
 
 void process_request(const int fd) {
@@ -179,14 +174,8 @@ int main(void) {
         if (pid == 0) {
             while (1) {
                 int acceptfd = accept(sockfd, (struct sockaddr*) &clientaddr, &clientaddr_length);
-
-//                printf("%d: Request #%d accepted\n", getpid(), count);
                 process_request(acceptfd);
-
-//                printf("%d: Request #%d processed\n", getpid(), count);
                 close(acceptfd);
-
-//                printf("%d: Request #%d served\n", getpid(), count);
             }
         } else if (pid < 0) {
             perror("Can't fork");
