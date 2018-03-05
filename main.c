@@ -70,7 +70,6 @@ void send_static(const int fd, const int rqfd, const char* path,
 }
 
 void process_request(const int fd) {
-    count++;
     struct http_request request;
     struct response_status response;
 

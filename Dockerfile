@@ -1,10 +1,10 @@
-FROM ubuntu:16.04
+FROM alpine
 
-RUN apt-get -y update && apt-get -y install gcc
+RUN apk add --no-cache build-base
 
 ADD . .
 
-RUN cc -o highload *.c
+RUN gcc -o highload *.c
 
 EXPOSE 80
 
